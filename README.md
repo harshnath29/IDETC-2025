@@ -1,2 +1,2 @@
-# FinalProjectME396P
-Detect Warping on 3D Prints Using OpenCV!
+# IDETC 2025 Harshin Sanam
+Detect Warping on Cooperative 3D Prints Using OpenCV!
