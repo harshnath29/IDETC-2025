@@ -53,7 +53,7 @@ def capture_single_image(save_path, filename="captured_image"):
 if __name__ == "__main__":
     # Set the save path and filename
     save_path = "./images"  # Directory to save the image
-    filename = "cropped_image"  # Filename for the saved image
+    filename = "test_image"  # Filename for the saved image
 
     # Call the function to capture and save the cropped image
     try:

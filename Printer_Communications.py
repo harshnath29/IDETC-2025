@@ -3,7 +3,6 @@ import json
 import time
 
 
-
 def issue_gcode(ip, com='', filename=""):
 
     base_request = ("http://{0}:{1}/rr_gcode?gcode=" + com).format(ip,"")
@@ -25,7 +24,7 @@ def request_printing_status(ip):
 
 if __name__ == "__main__":
 
-    ip1 = "192.168.0.187"
+    ip1 = "192.168.0.18"
     print(request_printing_status(ip1)) # Need to clean up method to return True or False on if printer is printing
     print(request_z_position(ip1))
 

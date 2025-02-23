@@ -1,7 +1,3 @@
-### CANNY, DISTANCE CALCULATION, IMAGE PROCESSING
-### SAMUEL WANG
-
-
 import numpy as np
 import cv2 as cv
 from matplotlib import pyplot as plt
@@ -12,42 +8,44 @@ from sklearn.neighbors import KNeighborsRegressor
 from sklearn.metrics import mean_squared_error, r2_score
 
 
-def CannyProcess(image) -> list:
-    '''
-    Takes an image, processes it, and returns the edges
-    :param image: the image to be processed by Canny
-    :return: edges from cv.Canny
-    '''
-    # Reading in the Image
-    src = cv.imread(image)
+def CannyProcess(image_path, color_range) -> list:
+    """
+    Processes an image using Canny edge detection after filtering by a specific color range.
 
-    # Convert to HSV
+    :param image_path: Path to the image file.
+    :param color_range: Tuple containing lower and upper HSV bounds for filtering.
+                        Example: ([lower_H, lower_S, lower_V], [upper_H, upper_S, upper_V])
+    :return: Edges detected by cv.Canny.
+    """
+    # Read in the image
+    src = cv.imread(image_path)
+
+    # Convert to HSV color space
     img_hsv = cv.cvtColor(src, cv.COLOR_BGR2HSV)
 
-    ## SHIFT HUE SPACE to decrease fuzziness on edges
-    shift = 90
-    img_hsv[:, :, 0] = (img_hsv[:, :, 0].astype(int) + shift) % 180
+    # Extract lower and upper bounds for filtering
+    lower_bound = np.array(color_range[0])
+    upper_bound = np.array(color_range[1])
 
-    # Bounds for color selection CHANGE THIS TO CHANGE WHAT COLOR IS PICKED UP
-    lower_bound = np.array([0,90,0])
-    upper_bound = np.array([255,255,255])
-
-    # Create a mask around the color
+    # Create a mask around the specified color range
     mask = cv.inRange(img_hsv, lower_bound, upper_bound)
+
+    # Apply mask to isolate regions of interest
     img_iso = cv.bitwise_and(src, src, mask=mask)
 
-    # Dilation to close contours, also slightly expands the exact edge of shape
-    # BUT expansion should be consistent from image to image
-    kernel = np.ones((15,15), np.uint8)
-    dilation = cv.dilate(mask,kernel,iterations = 1)
-    src_processed = cv.blur(dilation, (3,3))
+    # Dilation to close contours and expand edges slightly (consistent across images)
+    kernel = np.ones((15, 15), np.uint8)
+    dilation = cv.dilate(mask, kernel, iterations=1)
 
-    # Canny Edge Detection
+    src_processed = cv.blur(dilation, (3, 3))
+
+    # Perform Canny edge detection
     threshold1 = 90
     threshold2 = 180
     edges = cv.Canny(src_processed, threshold1, threshold2)
 
     return edges
+
 
 
 def createContours(edges: list, drawContours = False) -> list:
@@ -72,6 +70,71 @@ def createContours(edges: list, drawContours = False) -> list:
 
     return contours
 
+def compare_contours(contours1, contours2, distance_threshold=5, y_step=5):
+    """
+    Compares two contours along the Y-axis, measuring the distance between the farthest X on the left print
+    and the nearest X on the right print for each Y-axis level.
+
+    :param contours1: List of contours from the first (left) print
+    :param contours2: List of contours from the second (right) print
+    :param distance_threshold: Max allowed distance for a continuous boundary
+    :param y_step: Step size for sampling along the Y-axis
+    :return: Boolean (True if boundary is continuous, False if gaps exist)
+    """
+    # Convert contours to x, y coordinates
+    x1, y1, x2, y2 = [], [], [], []
+
+    for contour in contours1:
+        for point in contour:
+            row, col = point[0]
+            x1.append(row)
+            y1.append(-1 * col)
+
+    for contour in contours2:
+        for point in contour:
+            row, col = point[0]
+            x2.append(row)
+            y2.append(-1 * col)
+
+    # Convert to numpy arrays for easier manipulation
+    x1, y1 = np.array(x1), np.array(y1)
+    x2, y2 = np.array(x2), np.array(y2)
+
+    # Y-axis range for sampling
+    min_y = max(min(y1), min(y2))
+    max_y = min(max(y1), max(y2))
+    y_samples = np.arange(min_y, max_y, y_step)
+
+    result_array = []
+    for y in y_samples:
+        # Get points near current Y level for both contours
+        points1_y = x1[np.abs(y1 - y) <= y_step]
+        points2_y = x2[np.abs(y2 - y) <= y_step]
+
+        if len(points1_y) == 0 or len(points2_y) == 0:
+            continue  # Skip if no points found at this Y-level
+
+        # Farthest X on left print (max X for left)
+        max_x1 = np.max(points1_y)
+
+        # Nearest X on right print (min X for right)
+        min_x2 = np.min(points2_y)
+
+        # Calculate distance
+        distance = min_x2 - max_x1
+
+        # Append result based on distance threshold
+        result_array.append(distance <= distance_threshold)
+
+    # Evaluate the majority of the results
+    if len(result_array) == 0:
+        print("Insufficient data for comparison.")
+        return False
+
+    pass_ratio = np.sum(result_array) / len(result_array)
+    print(f"Pass Ratio: {pass_ratio:.2f}")
+
+    return pass_ratio > 0.5  # Adjust pass ratio as needed
 
 def maximumHeight(contours: list) -> float:
     '''
@@ -234,8 +297,8 @@ if __name__ == "__main__":
     # Example of how to run these functions
 
     # Canny Edges / Contours
-    edges1 = CannyProcess('WIN_20241121_18_02_09_Pro.jpg')
-    edges2 = CannyProcess('IMGB.jpg')
+    edges1 = CannyProcess('images\z_height_3.25.jpg')
+    edges2 = CannyProcess('images\z_height_6.45.jpg')
 
     contours1 = createContours(edges1)
     contours2 = createContours(edges2)
@@ -244,8 +307,8 @@ if __name__ == "__main__":
     print(maximumHeight(contours1))
 
     # Difference using Bounding Box Method
-    differences = compareBoundingEdges(contours1, contours2, cutHeight = maximumHeight(contours1) - 10, showCutImage = True)
+    differences = compareBoundingEdges(contours1, contours2, cutHeight = maximumHeight(contours1) + 80, showCutImage = True)
     print(differences)
 
     # Difference comparing Point by Point
-    print(closestPointComparison(contours1, contours2, cutHeight = maximumHeight(contours1) - 10))
+    print(closestPointComparison(contours1, contours2, cutHeight = maximumHeight(contours1) + 40, distance_threshold= 5))
