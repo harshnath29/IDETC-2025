@@ -1,0 +1,115 @@
+import pyrealsense2 as rs
+import numpy as np
+import cv2
+import os
+import time
+from ImageProcessing import *
+from Printer_Communications import *
+from HBcontroller import HotbedController
+
+
+def capture_single_image(save_path, filename="captured_image"):
+    """
+    Captures a single cropped image using Intel RealSense camera and saves it.
+    :param save_path: Path to save the captured image
+    :param filename: Filename for the saved image
+    """
+    # Initialize RealSense pipeline
+    pipeline = rs.pipeline()
+    config = rs.config()
+    config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)  # Configure color stream
+
+    # Start the pipeline
+    pipeline.start(config)
+
+    try:
+        print("Initializing camera. Waiting for focus...")
+        time.sleep(2)  # Wait for 2 seconds to allow the camera to adjust and focus
+
+        # Capture a single frame
+        frames = pipeline.wait_for_frames()
+        color_frame = frames.get_color_frame()
+        if not color_frame:
+            raise RuntimeError("Could not get a color frame from the camera.")
+
+        # Convert frame to a numpy array
+        color_image = np.asanyarray(color_frame.get_data())
+
+        # Crop the image using coordinates from the red rectangle
+        crop_coords = (250, 100, 520, 350)  # x_start, y_start, x_end, y_end
+        x_start, y_start, x_end, y_end = crop_coords
+        cropped_image = color_image[y_start:y_end, x_start:x_end]
+
+        # Ensure save path exists
+        os.makedirs(save_path, exist_ok=True)
+
+        # Save the cropped image
+        filepath = os.path.join(save_path, f"{filename}.jpg")
+        cv2.imwrite(filepath, cropped_image)
+        print(f"Image saved to {filepath}")
+        return filepath
+    finally:
+        # Stop the pipeline
+        pipeline.stop()
+        print("Camera pipeline stopped.")
+
+
+if __name__ == "__main__":
+    save_folder = "./images"
+    z_height = 0
+    last_contours = None
+    step_size = 2  # mm
+    ip = "192.168.0.18"
+    all_contours = []
+    lower_bound = np.array([0,90,0])
+    upper_bound = np.array([100,255,255])
+
+    hotbed = HotbedController()
+    base_temp = 65  # Base temperature for the hotbed
+    temp_increment = 5  # Temperature increment for minor warping
+
+    try:
+        while True:
+            current_z_height = request_z_position(ip)
+
+            if current_z_height - z_height >= step_size and current_z_height - z_height <= step_size+1:
+                z_height = current_z_height
+
+                image_path = capture_single_image(save_folder, f"z_height_{z_height}")
+                edges = CannyProcess(image_path, [lower_bound, upper_bound])
+                contours = createContours(edges)
+                all_contours.append(contours)
+
+                if last_contours is not None:
+                    max_difference = 0
+                    for contour in all_contours:
+                        try:
+                            difference = closestPointComparison(all_contours[-1], contour, cutHeight=maximumHeight(contour) + 40)
+                            max_difference = max(max_difference, difference)
+                        except ValueError:
+                            continue
+
+                    if max_difference >= 15:
+                        print(f"Severe warping detected at z-height {z_height}. Stopping printer.")
+                        issue_gcode(ip, "M25")  # Pause the printer
+                        break
+                    elif max_difference >= 5:
+                        new_temp = base_temp + temp_increment
+                        print(f"Minor warping detected. Increasing hotbed temperature to {new_temp}°C")
+                        hotbed.set_temperature(new_temp)
+                        base_temp = new_temp  # Update base temperature
+
+                last_contours = contours
+
+            # Read and log hotbed data
+            hotbed_data = hotbed.read_data()
+            if hotbed_data:
+                print(f"Hotbed: Temp={hotbed_data['Temp']}°C, Heater={hotbed_data['Heater']}")
+
+            if z_height > 50:  # Example: Stop after 50 mm
+                break
+
+            time.sleep(1)  # Delay between checks
+
+    finally:
+        hotbed.close()

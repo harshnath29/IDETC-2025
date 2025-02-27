@@ -1,73 +1,45 @@
 import numpy as np
 import cv2 as cv
 from matplotlib import pyplot as plt
-from PIL import Image
-from sklearn.datasets import make_regression
-from sklearn.model_selection import train_test_split
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.metrics import mean_squared_error, r2_score
 
 
 def CannyProcess(image_path, color_range) -> list:
-    """
-    Processes an image using Canny edge detection after filtering by a specific color range.
-
-    :param image_path: Path to the image file.
-    :param color_range: Tuple containing lower and upper HSV bounds for filtering.
-                        Example: ([lower_H, lower_S, lower_V], [upper_H, upper_S, upper_V])
-    :return: Edges detected by cv.Canny.
-    """
-    # Read in the image
     src = cv.imread(image_path)
-
-    # Convert to HSV color space
     img_hsv = cv.cvtColor(src, cv.COLOR_BGR2HSV)
-
-    # Extract lower and upper bounds for filtering
+    
     lower_bound = np.array(color_range[0])
     upper_bound = np.array(color_range[1])
-
-    # Create a mask around the specified color range
+    
     mask = cv.inRange(img_hsv, lower_bound, upper_bound)
-
-    # Apply mask to isolate regions of interest
-    img_iso = cv.bitwise_and(src, src, mask=mask)
-
-    # Dilation to close contours and expand edges slightly (consistent across images)
-    kernel = np.ones((15, 15), np.uint8)
-    dilation = cv.dilate(mask, kernel, iterations=1)
-
-    src_processed = cv.blur(dilation, (3, 3))
-
-    # Perform Canny edge detection
-    threshold1 = 90
-    threshold2 = 180
-    edges = cv.Canny(src_processed, threshold1, threshold2)
-
+    
+    # Apply Gaussian blur instead of regular blur
+    blurred = cv.GaussianBlur(mask, (5, 5), 0)
+    
+    # Use Canny edge detection with lower thresholds
+    edges = cv.Canny(blurred, 50, 150)
+    
+    # Perform morphological operations to refine edges
+    kernel = np.ones((3, 3), np.uint8)
+    edges = cv.morphologyEx(edges, cv.MORPH_CLOSE, kernel)
+    
     return edges
 
-
-
 def createContours(edges: list, drawContours = False) -> list:
-    '''
-    Creates contours from Canny edges (hopefully closes the edges)
-    :param edges: edges from cv.Canny()
-    :param drawContours: whether or not to show the drawn contours. Defaults to False.
-    :return: contours
-    '''
-    contours, _ = cv.findContours(edges, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_NONE)
-    # Note: RETR_EXTERNAL tries to only return an outermost contour (ex. if a contour is inside another contour, it is ignored)
-    # Note: CHAIN_APPROX_NONE just means we want ALL points detected back instead of simplifying
-
+    contours, _ = cv.findContours(edges, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_TC89_KCOS)
+    
     if drawContours:
         drawing = np.zeros((edges.shape[0], edges.shape[1], 3), dtype=np.uint8)
-        for i in range(len(contours)):
-            cv.drawContours(drawing, contours, i, (255, 255, 255))
-        # Window
+        for contour in contours:
+            # Use sub-pixel accuracy for drawing contours
+            refined_contour = cv.approxPolyDP(contour, 0.1, True)
+            cv.drawContours(drawing, [refined_contour], 0, (255, 255, 255), 1)
+        
         cv.namedWindow("Contours", cv.WINDOW_NORMAL)
         cv.imshow('Contours', drawing)
         cv.waitKey()
-
+    
     return contours
 
 def compare_contours(contours1, contours2, distance_threshold=5, y_step=5):
@@ -124,7 +96,8 @@ def compare_contours(contours1, contours2, distance_threshold=5, y_step=5):
         distance = min_x2 - max_x1
 
         # Append result based on distance threshold
-        result_array.append(distance <= distance_threshold)
+        if distance < 30:
+            result_array.append(distance <= distance_threshold)
 
     # Evaluate the majority of the results
     if len(result_array) == 0:
@@ -199,7 +172,7 @@ def compareBoundingEdges(contours1: list, contours2: list, cutHeight: float, sho
     return differences
 
 
-def closestPointComparison(contours1: list, contours2: list, cutHeight: float, distance_threshold = 15) -> bool:
+def closestPointComparison(contours1: list, contours2: list, cutHeight: float, distance_threshold = 15) -> int:
     '''
     Compares every point to its closest point on the other image.
     :param contours1: List of contours for the first image
@@ -223,16 +196,15 @@ def closestPointComparison(contours1: list, contours2: list, cutHeight: float, d
 
     xy1, xy2 = np.array(xy1), np.array(xy2)
 
+    max_distance = 0
+
     # Find closest point in xy2 for each point in xy1
     for point in xy1:
         distances = np.linalg.norm(xy2 - point, axis=1)
-        min_index = np.argmin(distances)
-        # print(distances[min_index]) for debugging
-        if distances[min_index] > distance_threshold: # If closest point is above threshold, return False
-            return False
+        min_distance = np.min(distances)
+        max_distance = max(max_distance, min_distance)
 
-    # Otherwise, return True
-    return True
+    return max_distance
 
 
 def kNNComparison(contours1: list, contours2: list, cutHeight: float, showCutImage = False):
